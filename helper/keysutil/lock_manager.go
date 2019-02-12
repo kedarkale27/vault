@@ -54,19 +54,57 @@ type PolicyRequest struct {
 }
 
 type LockManager struct {
-	useCache bool
-	// If caching is enabled, the map of name to in-memory policy cache
-	cache sync.Map
-
-	keyLocks []*locksutil.LockEntry
+	useCache  bool
+	cacheType CacheType
+	cache     Cache
+	keyLocks  []*locksutil.LockEntry
+	lock      sync.RWMutex
 }
 
 func NewLockManager(cacheDisabled bool) *LockManager {
 	lm := &LockManager{
-		useCache: !cacheDisabled,
-		keyLocks: locksutil.CreateLocks(),
+		useCache:  !cacheDisabled,
+		cacheType: NotInitialized,
+		keyLocks:  locksutil.CreateLocks(),
+		lock:      sync.RWMutex{},
 	}
+	lm.ConvertCacheToSyncmap()
 	return lm
+}
+
+func (lm *LockManager) ConvertCacheToLRU(size int) error {
+	lm.lock.Lock()
+	defer lm.lock.Unlock()
+	// update LockManager
+	newCache, err := NewTransitLRU(size)
+	if err != nil {
+		return err
+	}
+	lm.cacheType = LRU
+	lm.cache = newCache
+	return nil
+}
+
+func (lm *LockManager) ConvertCacheToSyncmap() {
+	lm.lock.Lock()
+	defer lm.lock.Unlock()
+	// update LockManager
+	lm.cacheType = SyncMap
+	lm.cache = NewTransitSyncMap()
+}
+
+func (lm *LockManager) GetCacheType() CacheType {
+	// Locked because lm.cache could change
+	lm.lock.RLock()
+	defer lm.lock.RUnlock()
+	return lm.cacheType
+}
+
+func (lm *LockManager) GetCacheSize() int {
+	// Locked because lm.cache could change
+	lm.lock.RLock()
+	defer lm.lock.RUnlock()
+	return lm.cache.Size()
 }
 
 func (lm *LockManager) CacheActive() bool {
@@ -75,6 +113,9 @@ func (lm *LockManager) CacheActive() bool {
 
 func (lm *LockManager) InvalidatePolicy(name string) {
 	if lm.useCache {
+		// Locked because lm.cache could change
+		lm.lock.RLock()
+		defer lm.lock.RUnlock()
 		lm.cache.Delete(name)
 	}
 }
@@ -107,6 +148,10 @@ func (lm *LockManager) RestorePolicy(ctx context.Context, storage logical.Storag
 
 	var ok bool
 	var pRaw interface{}
+
+	// Locked because lm.cache could change
+	lm.lock.RLock()
+	defer lm.lock.RUnlock()
 
 	// If the policy is in cache and 'force' is not specified, error out. Anywhere
 	// that would put it in the cache will also be protected by the mutex above,
@@ -186,7 +231,11 @@ func (lm *LockManager) BackupPolicy(ctx context.Context, storage logical.Storage
 	var p *Policy
 	var err error
 
-	// Backup writes information about when the bacup took place, so we get an
+	// Locked because lm.cache could change
+	lm.lock.RLock()
+	defer lm.lock.RUnlock()
+
+	// Backup writes information about when the backup took place, so we get an
 	// exclusive lock here
 	lock := locksutil.LockForKey(lm.keyLocks, name)
 	lock.Lock()
@@ -232,6 +281,10 @@ func (lm *LockManager) GetPolicy(ctx context.Context, req PolicyRequest) (retP *
 	var err error
 	var ok bool
 	var pRaw interface{}
+
+	// Locked because lm.cache could change
+	lm.lock.RLock()
+	defer lm.lock.RUnlock()
 
 	// Check if it's in our cache. If so, return right away.
 	if lm.useCache {
@@ -401,6 +454,10 @@ func (lm *LockManager) DeletePolicy(ctx context.Context, storage logical.Storage
 	var err error
 	var ok bool
 	var pRaw interface{}
+
+	// Locked because lm.cache could change
+	lm.lock.RLock()
+	defer lm.lock.RUnlock()
 
 	// We may be writing to disk, so grab an exclusive lock. This prevents bad
 	// behavior when the cache is turned off. We also lock the shared policy
