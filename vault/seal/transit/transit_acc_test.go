@@ -178,7 +178,7 @@ func prepareTestContainer(t *testing.T) (cleanup func(), retAddress, token, moun
 	}
 
 	// testing something on travis
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(100 * time.Second)
 
 	// exponential backoff-retry
 	if err = pool.Retry(func() error {
