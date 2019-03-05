@@ -177,6 +177,9 @@ func prepareTestContainer(t *testing.T) (cleanup func(), retAddress, token, moun
 		ClientKey:  path.Join(tempDir, "node1_port_8200_key.pem"),
 	}
 
+	// testing something on travis
+	time.Sleep(5)
+
 	// exponential backoff-retry
 	if err = pool.Retry(func() error {
 		vaultConfig := api.DefaultConfig()
